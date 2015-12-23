@@ -4,6 +4,8 @@ from sgmllib import SGMLParser
 from urlparse import *
 import HttpRequest
 import os
+import base64
+import time
 
 class GetIdList(SGMLParser):
         def reset(self):
@@ -36,11 +38,10 @@ class GetIdList(SGMLParser):
 class Download_Torrent(object):
 
     def __init__(self, dir):
-		self.httpRequest=HttpRequest.HttpRequest()
 		self.dir = dir
 
     def download_torrent(self, url):
-		content = self.httpRequest.getHttpContent(url)
+		content = HttpRequest.requestMultTimes(url)
 		if(content==""):
 			return False
 		f = GetIdList()
@@ -52,6 +53,10 @@ class Download_Torrent(object):
 			parts.append('--' + boundary)
 			parts.append('Content-Disposition: form-data; name="'+k+'"')
 			parts.append('')
+			#if(k=="reff"):
+			#	parts.append(base64.b64encode(str(time.time())))
+			#else:
+			#	parts.append(v)
 			parts.append(v)
 		parts.append('--' + boundary + '--')
 		parts.append('\r\n')
@@ -59,7 +64,7 @@ class Download_Torrent(object):
 
 		r = urlparse(url)
 		downloadUrl="http://"+r.netloc+"/"+f.action
-		content = self.httpRequest.getHttpContent(downloadUrl, postdata, { "Content-Type":"multipart/form-data; boundary="+boundary})
+		content = HttpRequest.requestMultTimes(downloadUrl, data=postdata, headers={ "Content-Type":"multipart/form-data; boundary="+boundary})
 		if(content==""):
 			return False
 		filename=f.formdata['ref']+".torrent"
@@ -74,8 +79,8 @@ def download(url, dir):
 
 
 if __name__=="__main__":
-    url="http://www.rmdown.com/link.php?hash=1529b80aa7e31ac705a22ae24604fae88610abc7816"
-    download(url)
+    url="http://www.rmdown.com/link.php?hash=153af089fb7f0a5c9d1496ea87b6a87c803ac31399d"
+    download(url, ".")
 
 
 
