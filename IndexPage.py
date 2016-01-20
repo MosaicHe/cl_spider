@@ -30,26 +30,12 @@ class ParserHtml(SGMLParser):
                 self.url_list.extend(hrel)
 
 class IndexPage(object):
-    def __init__(self, indexUrl,timeout=1, retryTimes=50):
+    def __init__(self, content):
         self.index=0
         self.urls=[]
-
-        content=HttpRequest.requestMultTimes(indexUrl, retryTimes=50)
-
-        '''
-        i=0
-        while(i<retryTimes):
-            try:
-                print("try %d time"%i)
-                r = requests.get(indexUrl, timeout=1.5)
-                break
-            except requests.exceptions.RequestException as e:
-                i += 1
-        '''
-
         parserhtml=ParserHtml()
         parserhtml.feed(content)
-        self.urls=parserhtml.url_list
+        self.urls=[ "http://cl.bearhk.info/%s"%u for u in parserhtml.url_list ]
 
     def __next__(self):
         if self.index > len(self.urls)-1:
@@ -64,7 +50,9 @@ class IndexPage(object):
 
 
 if __name__=="__main__":
-    indexPage = IndexPage('http://cl.bearhk.info/thread0806.php?fid=15&search=&page=1')
-    for url in indexPage:
-        print(url)
+	content = HttpRequest.requestMultTimes('http://cl.bearhk.info/thread0806.php?fid=15&search=&page=1', retryTimes=50)
+	if(content):
+		indexPage = IndexPage(content)
+		for url in indexPage:
+			print(url)
 

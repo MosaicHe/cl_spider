@@ -10,6 +10,8 @@ import DownloadTorrent
 import HttpRequest
 from urlparse import *
 import socket
+from gevent import monkey; monkey.patch_socket()
+import gevent
 
 class ParserHtml(SGMLParser):
     def reset(self):
@@ -47,71 +49,37 @@ class ParserHtml(SGMLParser):
             self.title=data.decode("GBK")
 
 class MainPage(object):
-    def __init__(self, url):
-        self.url=url
-        self.fileDir=""
-        self.pic_url=[]
-        self.torrent_url=""
-        self.htmlContent=""
-        self.parserhtml=ParserHtml()
-        self.validpage=True
-
-    def initial(self):
-		self.htmlContent = HttpRequest.requestMultTimes(self.url)
-		#print(self.htmlContent)
-		if(not self.htmlContent):
-			self.validpage=False
-			return
-		self.parserhtml.feed(self.htmlContent)
-		self.torrent_url=self.parserhtml.url
-		if self.torrent_url=="":
-			self.validpage=False
-			return
-		self.pic_url=self.parserhtml.picture
-		self.fileDir=self.parserhtml.title.split('  ')[0].replace('/','-').replace(' ', '-')
-		if(self.fileDir==""):
-			self.fileDir=self.torrent_url.split('=')[-1]
+	def __init__(self, mainPageContent):
+		self.title=""
+		self.pic_url=[]
+		self.torrent_url=""
+		parserhtml=ParserHtml()
+		parserhtml.feed(mainPageContent)
+		self.torrent_url=parserhtml.url
+		self.pic_url=parserhtml.picture
+		self.title=parserhtml.title.split('  ')[0].replace('/','-').replace(' ', '-')
+		if(self.title==""):
+			self.title=self.torrent_url.split('=')[-1]
 		#self.fileDir=re.match("[A-Z0-9]*", self.parserhtml.title)
-		print(self.fileDir)
-		#print(self.pic_url)
-		dirlist=os.listdir('.')
-		if( not self.fileDir.encode("GBK") in dirlist ):
-			try:
-				os.mkdir(self.fileDir)
-			except:
-				self.fileDir=self.torrent_url.split("hash=")[-1]
-				if( not self.fileDir.encode("GBK") in dirlist ):
-					os.mkdir(self.fileDir)
+		#print(self.title)
 
-    def download_picture(self):
-        i=0
-        for url in self.pic_url[:4]:
-                name="%d.jpg"%i
-                f=open( os.path.join(self.fileDir, name), "wb")
-                f.write(HttpRequest.requestMultTimes(url))
-                f.close()
-                i += 1
-                print("Download picture %d"%i+" success")
+	def getTitle(self):
+		return self.title
 
-    def download_torrent(self):
-        if(DownloadTorrent.download(self.torrent_url, self.fileDir)):
-            print("downloading torrent success")
-        else:
-            print("downloading torrent failed")
+	def getPictureUrlList(self, num=3):
+		return self.pic_url[:num]
 
+	def getTorrentUrl(self):
+		return self.torrent_url
 
-def exec_download(url):
-	m = MainPage(url)
-	m.initial()
-	if not m.validpage:
-		return
-	m.download_picture()
-	m.download_torrent()
 
 if __name__=="__main__":
-    url="http://cl.bearhk.info/htm_data/15/1506/1514602.html"
-    m = MainPage(url)
-    m.initial()
-    m.download_picture()
-    #m.download_torrent()
-
+	url="http://cl.bearhk.info/htm_data/15/1506/1514602.html"
+	content = HttpRequest.requestMultTimes(url)
+	print content
+	if(content!=None):
+		m = MainPage(content)
+		print m.getTitle()
+		print m.getPictureUrlList(4)
+		print m.getTorrentUrl()
+    

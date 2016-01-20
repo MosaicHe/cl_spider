@@ -6,6 +6,10 @@ from urlparse import *
 import socket
 import time
 import requests
+from sgmllib import SGMLParser
+from urlparse import *
+import os
+import base64
 
 headers={
             "Connection":"keep-alive",
@@ -22,18 +26,86 @@ def requestMultTimes(url, data='', headers=headers, timeout=1.5, retryTimes=20):
     i=0
     while(i<retryTimes):
         try:
-            print("try %d time"%i)
+            #print("try %d time"%i)
             if(data!=''):
                 r = requests.post(url, data=data, headers=headers, timeout=timeout)
             else:
                 r = requests.get( url, timeout=1.5, headers=headers)
-            break
+            return r.content
         except requests.exceptions.RequestException as e:
             i += 1
-    return r.content
+    return None
+
+
+def saveContentAsFile(url, filePath):
+    content = requestMultTimes(url)
+    if(content):
+        f=open( filePath, "wb")
+        f.write(requestMultTimes(url))
+        f.close()
+
+
+class ParserTorrentPage(SGMLParser):
+        def reset(self):
+            self.flag = False
+            self.formdata = {}
+            self.action=""
+            SGMLParser.reset(self)
+
+        def start_form(self, attrs):
+            self.flag= True
+            for k,v in attrs:
+                if(k=="action"):
+                    self.action=v
+
+        def end_form(self):
+            self.flag = False
+
+        def start_input(self,attrs):
+            if(self.flag):
+                name=""
+                val=""
+                for k, v in attrs:
+                    if(k=="name" ):
+                        name=v
+                    elif(k=="value"):
+                         val=v
+                    if(name!="" and val !=""):
+                        self.formdata[name]=val
+
+def saveTorrentFile(url, filePath="./1.torrent"):
+	print url
+	content = requestMultTimes(url, retryTimes=30)
+	print content
+	if(content==None):
+		return False
+	f = ParserTorrentPage()
+	f.feed(content)
+
+	boundary = "----WebKitFormBoundarydMcOM7W0mij63Igr"
+	parts=[]
+	for k,v in f.formdata.items():
+		parts.append('--' + boundary)
+		parts.append('Content-Disposition: form-data; name="'+k+'"')
+		parts.append('')
+		parts.append(v)
+
+	parts.append('--' + boundary + '--')
+	parts.append('\r\n')
+	postdata = '\r\n'.join(parts)
+
+	r = urlparse(url)
+	downloadUrl="http://"+r.netloc+"/"+f.action
+	content = requestMultTimes(downloadUrl, data=postdata, headers={"Content-Type":"multipart/form-data; boundary="+boundary})
+	if(content==""):
+		return False
+	f=open(filePath, "wb")
+	f.write(content)
+	f.close()
+
 
 if __name__=="__main__":
     url="http://t10.imgchili.net/66345/66345844_xv9.cc_nhdta684c.jpg"
-    f=open( "test.jpg", "wb")
-    f.write(requestMultTimes(url))
-    f.close()
+    saveContentAsFile(url, "./test.jpg")
+    url = "http://www.rmdown.com/link.php?hash=1528d4b8a37c79d2221c437332aff728daa2a4d989b"
+    saveTorrentFile(url, "./test.torrent")
