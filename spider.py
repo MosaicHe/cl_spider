@@ -25,13 +25,17 @@ CONTENT_TYPE_TEXT = {
 }
 
 class Request(object):
-    def __init__(self, url, request_type='get', params=None, data=None,
+    def __init__(self, spider, url, request_type='get', params=None, data=None,
                  content_type='text'):
+        self.spider = spider
         self.url = url
         self.request_type = request_type
         self.params = params
         self.data = data
         self.content_type = content_type
+
+        # append request to spider task queue
+        self.spider.append_request(self)
 
     def handle_func(self, content):
         pass
@@ -50,11 +54,6 @@ class Spider:
 
     def close(self):
         self.session.close()
-
-    #delete '\' and '/' in dir name string
-    def _strip_dir_name(self, dir):
-        str = '-'.join('-'.join(dir.split('\\')).split('/'))
-        return '-'.join(str.split())
 
 
     def append_request(self, request):
@@ -95,7 +94,7 @@ class Spider:
             tries += 1
         else:
             print("try %s---->more than %d times, quit"%(url, tries))
-            return
+            return None
 
 
     @asyncio.coroutine
@@ -124,22 +123,6 @@ class Spider:
 
         for w in workers:
              w.cancel()
-
-class IndexPageRequest(Request):
-
-    def handle_func(self, content):
-        """ parse index page, return main page urls set"""
-        links = set()
-        """BeautifulSoup parse index page, get urls and titles"""
-        soup = BeautifulSoup(content, 'lxml')
-        for a in soup.find_all(href=re.compile("htm_data")):
-            if a.find_parent().name=="h3":
-                normalized = urllib.parse.urljoin(self.url, a['href'])
-                defragmented, frag = urllib.parse.urldefrag(normalized)
-                print(defragmented)
-                print(a.string)
-                #self.q.put_nowait((defragmented, None, self.parse_main, a.string))
-        return 0
 
 
 
