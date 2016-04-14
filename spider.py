@@ -14,8 +14,10 @@ from bs4 import BeautifulSoup
 import re
 import os
 
+CL_URL = "http://cl.bearhk.info/thread0806.php?fid=15&search=&page=%s"
+
 class Spider:
-    def __init__(self, max_tries=30, max_tasks=50, picture_num=2
+    def __init__(self,page_num=1, max_tries=30, max_tasks=10, picture_num=2
                  , rootDir=os.getcwd()):
         self.max_tries = max_tries
         self.max_tasks = max_tasks
@@ -23,18 +25,19 @@ class Spider:
         self.loop = asyncio.get_event_loop()
         self.q = Queue(loop=self.loop)
         self.session = aiohttp.ClientSession(loop=self.loop)
-        url = "http://cl.bearhk.info/thread0806.php?fid=15&search=&page=1"
-        self.q.put_nowait((url, self.parse_index, None))
         self.rootDir = rootDir
-
+        self.page_num = page_num
+        for i in range( page_num ):
+            url = CL_URL%(i)
+            self.q.put_nowait(( url, None, self.parse_index, None))
 
     def close(self):
         self.session.close()
 
     #delete '\' and '/' in dir name string
     def _strip_dir_name(self, dir):
-        str = ''.join(''.join(dir.split('\\')).split('/'))
-        return '_'.join(str.split())
+        str = '-'.join('-'.join(dir.split('\\')).split('/'))
+        return '-'.join(str.split())
 
     @asyncio.coroutine
     def parse_index(self, response, *arg):
@@ -47,13 +50,15 @@ class Spider:
 
                 """BeautifulSoup parse index page, get urls and titles"""
                 soup = BeautifulSoup(text, 'lxml')
-                for a in soup.find_all(href=re.compile("htm_data"))[4:]:
+                for a in soup.find_all(href=re.compile("htm_data")):
                     if a.find_parent().name=="h3":
                         normalized = urllib.parse.urljoin(response.url, a['href'])
                         defragmented, frag = urllib.parse.urldefrag(normalized)
                         print(defragmented)
                         print(a.string)
-                        self.q.put_nowait((defragmented, self.parse_main, a.string))
+                        self.q.put_nowait((defragmented, None, self.parse_main, a.string))
+
+                return 0
 
     @asyncio.coroutine
     def parse_main(self, response, *arg):
@@ -70,30 +75,28 @@ class Spider:
                     dir = os.path.join(self.rootDir, name)
                     if not os.path.exists(dir):
                         os.makedirs(dir)
-                        print("%20s ========>创建目录！<======="%(name))
+                        print("%s ==============>创建目录！"%(name))
 
                     #parse torrent url
                     torrentPath = os.path.join(dir, "1.torrent")
-                    self.q.put_nowait( (hashList[0], self.download_torrent, torrentPath) )
+                    if not os.path.exists(torrentPath):
+                        self.q.put_nowait( (hashList[0], None, self.download_torrent, torrentPath) )
 
                     #parse picture url
                     jpgList = soup.find_all(src=re.compile("\.jpg"))
                     for i in range(self.picture_num):
                         picPath = os.path.join(dir, "%d.jpg"%i)
                         if not os.path.exists(picPath):
-                            self.q.put_nowait((jpgList[i]['src'], self.download_file, picPath))
-                            #print(hashList[0])
+                            self.q.put_nowait((jpgList[i]['src'], None, self.download_file, picPath))
 
     @asyncio.coroutine
     def download_file(self, response, *arg):
         if response.status == 200:
             filePath = arg[0][0]
-            f=open( filePath, "wb")
             binary = yield from response.read()
-            f.write(binary)
-            f.close
-            print("%30s ========>下载完成！<======="%(filePath))
-
+            with open( filePath, "wb") as f:
+                f.write(binary)
+                print("%s ===============>下载完成！"%(filePath))
 
     @asyncio.coroutine
     def download_torrent(self, response, *args):
@@ -108,37 +111,36 @@ class Spider:
                 params = {}
                 for i in inputList:
                     params[i['name']]=i['value']
-
-                response = yield from self.session.get(downloadUrl, params=params)
-                yield from self.download_file(response, *args)
+                self.q.put_nowait((downloadUrl, params, self.download_file, args[0][0]))
 
 
     @asyncio.coroutine
-    def fetch(self, url, handle_func, *arg):
+    def fetch(self, url, params, handle_func, *arg):
         """Fetch one URL"""
         tries = 0
         exception = None
         while tries < self.max_tries:
             try:
-                #print("try %d times"%(tries))
-                response = yield from self.session.get(url)
+                print("try %s---->%d times"%(url, tries))
+                with aiohttp.Timeout(40):
+                    response = yield from self.session.get(url, params=params)
+                    yield from handle_func(response, arg)
+                    yield from response.release()
                 break;
+            except asyncio.TimeoutError:
+                pass
             except aiohttp.ClientError as client_error:
                 exception = client_error
             tries += 1
-        else:
-            return
 
-        yield from handle_func(response, arg)
-        yield from response.release()
 
     @asyncio.coroutine
     def work(self):
         """Process queue items forever."""
         try:
             while True:
-                url,func,name = yield from self.q.get()
-                yield from self.fetch(url, func, name)
+                url, params, func, name = yield from self.q.get()
+                yield from self.fetch(url, params, func, name)
                 self.q.task_done()
         except asyncio.CancelledError:
             pass
@@ -156,7 +158,7 @@ class Spider:
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    spider = Spider(rootDir='./source')
+    spider = Spider(page_num=5, max_tasks=100, rootDir='./source')
     loop.run_until_complete(spider.spider())
     spider.close()
     loop.stop()
