@@ -16,6 +16,26 @@ import os
 
 CL_URL = "http://cl.bearhk.info/thread0806.php?fid=15&search=&page=%s"
 
+
+CONTENT_TYPE_TEXT = {
+    'text/html',
+    'application/xml',
+    'text/xml',
+    'text/*'
+}
+
+class Request(object):
+    def __init__(self, url, request_type='get', params=None, data=None,
+                 content_type='text'):
+        self.url = url
+        self.request_type = request_type
+        self.params = params
+        self.data = data
+        self.content_type = content_type
+
+    def handle_func(self, content):
+        pass
+
 class Spider:
     def __init__(self,page_num=1, max_tries=30, max_tasks=10, picture_num=2
                  , rootDir=os.getcwd()):
@@ -27,9 +47,6 @@ class Spider:
         self.session = aiohttp.ClientSession(loop=self.loop)
         self.rootDir = rootDir
         self.page_num = page_num
-        for i in range( page_num ):
-            url = CL_URL%(i)
-            self.q.put_nowait(( url, None, self.parse_index, None))
 
     def close(self):
         self.session.close()
@@ -39,83 +56,19 @@ class Spider:
         str = '-'.join('-'.join(dir.split('\\')).split('/'))
         return '-'.join(str.split())
 
-    @asyncio.coroutine
-    def parse_index(self, response, *arg):
-        """ parse index page, return main page urls set"""
-        links = set()
-        if response.status == 200:
-            content_type = response.headers.get('content-type')
-            if content_type in ('text/html', 'application/xml'):
-                text = yield from response.text(encoding='GBK')
 
-                """BeautifulSoup parse index page, get urls and titles"""
-                soup = BeautifulSoup(text, 'lxml')
-                for a in soup.find_all(href=re.compile("htm_data")):
-                    if a.find_parent().name=="h3":
-                        normalized = urllib.parse.urljoin(response.url, a['href'])
-                        defragmented, frag = urllib.parse.urldefrag(normalized)
-                        print(defragmented)
-                        print(a.string)
-                        self.q.put_nowait((defragmented, None, self.parse_main, a.string))
-
-                return 0
-
-    @asyncio.coroutine
-    def parse_main(self, response, *arg):
-        """parse main page, get picture url and download torrent page url"""
-        if response.status == 200:
-            content_type = response.headers.get('content-type')
-            if content_type in ('text/html', 'application/xml'):
-                text = yield from response.text(encoding='GBK')
-                #print(text)
-                soup = BeautifulSoup(text, 'lxml')
-                hashList = soup.find_all(text=re.compile("hash"))
-                if len( hashList )!=0:
-                    name = self._strip_dir_name(arg[0][0])
-                    dir = os.path.join(self.rootDir, name)
-                    if not os.path.exists(dir):
-                        os.makedirs(dir)
-                        print("%s ==============>创建目录！"%(name))
-
-                    #parse torrent url
-                    torrentPath = os.path.join(dir, "1.torrent")
-                    if not os.path.exists(torrentPath):
-                        self.q.put_nowait( (hashList[0], None, self.download_torrent, torrentPath) )
-
-                    #parse picture url
-                    jpgList = soup.find_all(src=re.compile("\.jpg"))
-                    for i in range(self.picture_num):
-                        picPath = os.path.join(dir, "%d.jpg"%i)
-                        if not os.path.exists(picPath):
-                            self.q.put_nowait((jpgList[i]['src'], None, self.download_file, picPath))
-
-    @asyncio.coroutine
-    def download_file(self, response, *arg):
-        if response.status == 200:
-            filePath = arg[0][0]
-            binary = yield from response.read()
-            with open( filePath, "wb") as f:
-                f.write(binary)
-                print("%s ===============>下载完成！"%(filePath))
-
-    @asyncio.coroutine
-    def download_torrent(self, response, *args):
-        if response.status == 200:
-            content_type = response.headers.get('content-type')
-            if content_type in ('text/html', 'application/xml'):
-                text = yield from response.text(encoding='GBK')
-                #print(text)
-                downloadUrl = urllib.parse.urljoin(response.url, 'download.php');
-                soup = BeautifulSoup(text, 'lxml')
-                inputList = soup.find_all('input')
-                params = {}
-                for i in inputList:
-                    params[i['name']]=i['value']
-                self.q.put_nowait((downloadUrl, params, self.download_file, args[0][0]))
+    def append_request(self, request):
+        self.q.put_nowait(request)
 
 
     @asyncio.coroutine
-    def fetch(self, url, params, handle_func, *arg):
+    def _get_request(self):
+        r = yield from self.q.get()
+        return r
+
+
+    @asyncio.coroutine
+    def fetch(self, request_type, url, params, data):
         """Fetch one URL"""
         tries = 0
         exception = None
@@ -124,26 +77,43 @@ class Spider:
                 print("try %s---->%d times"%(url, tries))
                 with aiohttp.Timeout(40):
                     response = yield from self.session.get(url, params=params)
-                    yield from handle_func(response, arg)
-                    yield from response.release()
+                    if response.status == 200:
+                        url = response.url
+                        content_type = response.headers.get('content-type')
+                        if content_type in CONTENT_TYPE_TEXT:
+                            content = yield from response.text(encoding='GBK')
+                        else:
+                            content = yield from response.read()
+                        yield from response.release()
+                        return content
                 break;
             except asyncio.TimeoutError:
+                print("timeout")
                 pass
             except aiohttp.ClientError as client_error:
                 exception = client_error
             tries += 1
+        else:
+            print("try %s---->more than %d times, quit"%(url, tries))
+            return
 
 
     @asyncio.coroutine
-    def work(self):
+    def _work(self):
         """Process queue items forever."""
         try:
             while True:
-                url, params, func, name = yield from self.q.get()
-                yield from self.fetch(url, params, func, name)
+                r = yield from self._get_request()
+                content = yield from self.fetch(r.request_type, r.url, r.params, r.data)
+                if(content):
+                    r.handle_func(content)
                 self.q.task_done()
         except asyncio.CancelledError:
             pass
+
+    @asyncio.coroutine
+    def work(self):
+        yield from self._work()
 
     @asyncio.coroutine
     def spider(self):
@@ -155,10 +125,29 @@ class Spider:
         for w in workers:
              w.cancel()
 
+class IndexPageRequest(Request):
+
+    def handle_func(self, content):
+        """ parse index page, return main page urls set"""
+        links = set()
+        """BeautifulSoup parse index page, get urls and titles"""
+        soup = BeautifulSoup(content, 'lxml')
+        for a in soup.find_all(href=re.compile("htm_data")):
+            if a.find_parent().name=="h3":
+                normalized = urllib.parse.urljoin(self.url, a['href'])
+                defragmented, frag = urllib.parse.urldefrag(normalized)
+                print(defragmented)
+                print(a.string)
+                #self.q.put_nowait((defragmented, None, self.parse_main, a.string))
+        return 0
+
+
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    spider = Spider(page_num=5, max_tasks=100, rootDir='./source')
+    spider = Spider(page_num=5, max_tries=2, max_tasks=2, rootDir='./source')
+    request = IndexPageRequest(CL_URL%1)
+    spider.append_request(request)
     loop.run_until_complete(spider.spider())
     spider.close()
     loop.stop()
