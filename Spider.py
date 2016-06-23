@@ -41,16 +41,15 @@ class Request(object):
         pass
 
 class Spider:
-    def __init__(self,page_num=1, max_tries=30, max_tasks=10, picture_num=2
-                 , rootDir=os.getcwd()):
+    def __init__(self, max_tries=30, max_tasks=10, timeout=5,
+                 rootDir=os.getcwd()):
         self.max_tries = max_tries
         self.max_tasks = max_tasks
-        self.picture_num = picture_num
         self.loop = asyncio.get_event_loop()
         self.q = Queue(loop=self.loop)
         self.session = aiohttp.ClientSession(loop=self.loop)
+        self.timeout = timeout
         self.rootDir = rootDir
-        self.page_num = page_num
 
     def close(self):
         self.session.close()
@@ -65,7 +64,6 @@ class Spider:
         r = yield from self.q.get()
         return r
 
-
     @asyncio.coroutine
     def fetch(self, request_type, url, params, data):
         """Fetch one URL"""
@@ -74,28 +72,30 @@ class Spider:
         while tries < self.max_tries:
             try:
                 print("try %s---->%d times"%(url, tries))
-                with aiohttp.Timeout(40):
+                with aiohttp.Timeout(self.timeout):
                     response = yield from self.session.get(url, params=params)
                     if response.status == 200:
-                        url = response.url
                         content_type = response.headers.get('content-type')
                         if content_type in CONTENT_TYPE_TEXT:
-                            content = yield from response.text(encoding='GBK')
+                            with aiohttp.Timeout(self.timeout):
+                                content = yield from response.text(encoding='GBK')
                         else:
-                            content = yield from response.read()
-                        yield from response.release()
-                        return content
-                break;
+                            with aiohttp.Timeout(self.timeout):
+                                content = yield from response.read()
+                    break;
             except asyncio.TimeoutError:
                 print("timeout")
-                pass
             except aiohttp.ClientError as client_error:
-                exception = client_error
+                print("client error")
+            except Exception:
+                print("unknown error")
             tries += 1
         else:
             print("try %s---->more than %d times, quit"%(url, tries))
             return None
 
+        response.release()
+        return content
 
     @asyncio.coroutine
     def _work(self):
@@ -124,16 +124,4 @@ class Spider:
         for w in workers:
              w.cancel()
 
-
-
-if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    spider = Spider(page_num=5, max_tries=2, max_tasks=2, rootDir='./source')
-    request = IndexPageRequest(CL_URL%1)
-    spider.append_request(request)
-    loop.run_until_complete(spider.spider())
-    spider.close()
-    loop.stop()
-    loop.run_forever()
-    loop.close()
 
